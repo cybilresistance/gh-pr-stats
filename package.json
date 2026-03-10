@@ -1,0 +1,19 @@
+{
+  "name": "gh-pr-stats",
+  "version": "0.1.0",
+  "description": "CLI tool to fetch merged PR stats (lines added/removed/net) per user for a GitHub org/repo",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "lint": "tsc --noEmit"
+  },
+  "bin": {
+    "gh-pr-stats": "./dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
