@@ -1,3 +1,10 @@
+export interface PRListItem {
+  number: number;
+  title: string;
+  author: string;
+  mergedAt: string;
+}
+
 export interface PRStats {
   number: number;
   title: string;

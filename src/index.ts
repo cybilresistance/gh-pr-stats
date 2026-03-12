@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { parseArgs } from "./args.js";
-import { fetchMergedPRs } from "./fetch.js";
+import { listMergedPRs, fetchPRStats } from "./fetch.js";
 import { loadCache, saveCache } from "./cache.js";
 import { aggregateByUser } from "./aggregate.js";
 import { printPRTable, printUserSummary, printHeader } from "./output.js";
@@ -11,22 +11,31 @@ async function main() {
 
   printHeader(args.org, args.repo, args.last);
 
+  // 1. Load cached PRs from disk
   const cached = args.noCache ? [] : loadCache(args.org, args.repo);
-  const cachedNumbers = new Set(cached.map((pr) => pr.number));
+  const cachedByNumber = new Map(cached.map((pr) => [pr.number, pr]));
 
-  const fetched = await fetchMergedPRs(args.org, args.repo, args.last);
-  const toFetch = fetched.filter((pr) => !cachedNumbers.has(pr.number));
-  const alreadyCached = cached.filter((pr) =>
-    fetched.some((f) => f.number === pr.number)
-  );
+  // 2. List merged PRs for the date range (cheap — one CLI call)
+  const listed = await listMergedPRs(args.org, args.repo, args.last);
 
-  const allPRs = [...alreadyCached, ...toFetch].sort(
+  // 3. Partition: cached vs uncached
+  const uncached = listed.filter((pr) => !cachedByNumber.has(pr.number));
+  const cachedInRange = listed
+    .filter((pr) => cachedByNumber.has(pr.number))
+    .map((pr) => cachedByNumber.get(pr.number)!);
+
+  // 4. Fetch diff stats ONLY for uncached PRs
+  const newlyFetched = await fetchPRStats(args.org, args.repo, uncached);
+
+  // 5. Merge cached + newly fetched
+  const allPRs = [...cachedInRange, ...newlyFetched].sort(
     (a, b) =>
       new Date(a.mergedAt).getTime() - new Date(b.mergedAt).getTime()
   );
 
-  if (!args.noCache && toFetch.length > 0) {
-    saveCache(args.org, args.repo, allPRs);
+  // 6. Save only newly fetched PRs to cache
+  if (!args.noCache && newlyFetched.length > 0) {
+    saveCache(args.org, args.repo, newlyFetched);
   }
 
   if (allPRs.length === 0) {
@@ -34,9 +43,9 @@ async function main() {
     return;
   }
 
-  if (toFetch.length > 0 && cached.length > 0) {
+  if (newlyFetched.length > 0 && cachedInRange.length > 0) {
     console.log(
-      `\n  ${alreadyCached.length} cached, ${toFetch.length} fetched\n`
+      `\n  ${cachedInRange.length} cached, ${newlyFetched.length} newly fetched`
     );
   }
 
