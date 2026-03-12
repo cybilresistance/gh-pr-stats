@@ -28,7 +28,8 @@ export async function listMergedPRs(
 
   console.log(`\n  Fetching merged PRs since ${sinceStr}...`);
 
-  const listCmd = `gh pr list --repo ${org}/${repo} --state merged --search "merged:>=${sinceStr}" --limit 300 --json number,title,author,mergedAt`;
+  const PR_LIMIT = 1000;
+  const listCmd = `gh pr list --repo ${org}/${repo} --state merged --search "merged:>=${sinceStr}" --limit ${PR_LIMIT} --json number,title,author,mergedAt`;
 
   let prs: GHPullRequest[];
   try {
@@ -44,6 +45,10 @@ export async function listMergedPRs(
   }
 
   console.log(`  Found ${prs.length} merged PRs.`);
+
+  if (prs.length >= PR_LIMIT) {
+    console.warn(`\n  ⚠ Results capped at ${PR_LIMIT} — some PRs may be missing. Try a shorter time range.`);
+  }
 
   return prs.map((pr) => ({
     number: pr.number,
