@@ -19,6 +19,7 @@ export function loadCache(org: string, repo: string): PRStats[] {
       const data = readFileSync(join(dir, file), "utf-8");
       const pr = JSON.parse(data);
       pr.total ??= (pr.additions ?? 0) + (pr.deletions ?? 0);
+      pr.commits ??= [];
       results.push(pr);
     } catch {
       // skip corrupt cache files

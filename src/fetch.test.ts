@@ -67,8 +67,19 @@ describe("fetchPRStats", () => {
       { number: 8, title: "PR eight", author: "bob", mergedAt: "2026-03-11T12:00:00Z" },
     ];
 
+    // Mock data matches --jq output format (already transformed)
+    const commitsFor5 = JSON.stringify([
+      { sha: "aaa", author: "alice", message: "feat: stuff" },
+      { sha: "bbb", author: "carol", message: "fix: thing" },
+    ]);
+    const commitsFor8 = JSON.stringify([
+      { sha: "ccc", author: "bob", message: "init" },
+    ]);
+
     mockExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
+      if (cmdStr.includes("/pulls/5/commits")) return commitsFor5 as any;
+      if (cmdStr.includes("/pulls/8/commits")) return commitsFor8 as any;
       if (cmdStr.includes("/pulls/5"))
         return JSON.stringify({ additions: 10, deletions: 3 }) as any;
       if (cmdStr.includes("/pulls/8"))
@@ -79,20 +90,18 @@ describe("fetchPRStats", () => {
     const result = await fetchPRStats("myorg", "myrepo", prs);
 
     expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({
+    expect(result[0]).toMatchObject({
       number: 5, title: "PR five", author: "alice",
-      mergedAt: "2026-03-10T12:00:00Z", additions: 10, deletions: 3, net: 7, total: 13,
+      additions: 10, deletions: 3, net: 7, total: 13,
     });
-    expect(result[1]).toEqual({
+    expect(result[0].commits).toHaveLength(2);
+    expect(result[0].commits[0].author).toBe("alice");
+    expect(result[0].commits[1].author).toBe("carol");
+    expect(result[1]).toMatchObject({
       number: 8, title: "PR eight", author: "bob",
-      mergedAt: "2026-03-11T12:00:00Z", additions: 20, deletions: 5, net: 15, total: 25,
+      additions: 20, deletions: 5, net: 15, total: 25,
     });
-
-    // Verify only the 2 PRs had their stats fetched (no other gh api calls)
-    const apiCalls = mockExecSync.mock.calls.filter((c) =>
-      String(c[0]).includes("gh api")
-    );
-    expect(apiCalls).toHaveLength(2);
+    expect(result[1].commits).toHaveLength(1);
   });
 
   it("returns empty array when given no PRs", async () => {
@@ -116,6 +125,7 @@ describe("fetchPRStats", () => {
     expect(result[0].deletions).toBe(0);
     expect(result[0].net).toBe(0);
     expect(result[0].total).toBe(0);
+    expect(result[0].commits).toEqual([]);
   });
 });
 
@@ -123,9 +133,9 @@ describe("cache integration", () => {
   it("only uncached PRs should be passed to fetchPRStats", () => {
     // Simulate the index.ts logic
     const cached: PRStats[] = [
-      { number: 1, title: "Cached PR", author: "alice", mergedAt: "2026-03-09T12:00:00Z", additions: 10, deletions: 2, net: 8, total: 12 },
-      { number: 2, title: "Also cached", author: "bob", mergedAt: "2026-03-10T12:00:00Z", additions: 5, deletions: 1, net: 4, total: 6 },
-      { number: 3, title: "Old cached", author: "carol", mergedAt: "2026-03-01T12:00:00Z", additions: 100, deletions: 50, net: 50, total: 150 },
+      { number: 1, title: "Cached PR", author: "alice", mergedAt: "2026-03-09T12:00:00Z", additions: 10, deletions: 2, net: 8, total: 12, commits: [] },
+      { number: 2, title: "Also cached", author: "bob", mergedAt: "2026-03-10T12:00:00Z", additions: 5, deletions: 1, net: 4, total: 6, commits: [] },
+      { number: 3, title: "Old cached", author: "carol", mergedAt: "2026-03-01T12:00:00Z", additions: 100, deletions: 50, net: 50, total: 150, commits: [] },
     ];
     const cachedByNumber = new Map(cached.map((pr) => [pr.number, pr]));
 

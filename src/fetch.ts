@@ -1,6 +1,6 @@
 import { execSync } from "child_process";
 import { parseDuration } from "./args.js";
-import type { PRListItem, PRStats } from "./types.js";
+import type { CommitInfo, PRListItem, PRStats } from "./types.js";
 
 interface GHPullRequest {
   number: number;
@@ -60,38 +60,43 @@ export async function fetchPRStats(
 ): Promise<PRStats[]> {
   if (prs.length === 0) return [];
 
-  console.log(`  Fetching diff stats for ${prs.length} PRs...`);
+  console.log(`  Fetching stats & commits for ${prs.length} PRs...`);
 
   const results: PRStats[] = [];
   for (const pr of prs) {
+    let additions = 0;
+    let deletions = 0;
+    let commits: CommitInfo[] = [];
+
     try {
       const statsCmd = `gh api repos/${org}/${repo}/pulls/${pr.number} --jq '{additions, deletions}'`;
       const statsOutput = execSync(statsCmd, { encoding: "utf-8" });
       const stats = JSON.parse(statsOutput);
-
-      results.push({
-        number: pr.number,
-        title: pr.title,
-        author: pr.author,
-        mergedAt: pr.mergedAt,
-        additions: stats.additions,
-        deletions: stats.deletions,
-        net: stats.additions - stats.deletions,
-        total: stats.additions + stats.deletions,
-      });
+      additions = stats.additions;
+      deletions = stats.deletions;
     } catch {
-      // If we can't get stats for a PR, include it with zero stats
-      results.push({
-        number: pr.number,
-        title: pr.title,
-        author: pr.author,
-        mergedAt: pr.mergedAt,
-        additions: 0,
-        deletions: 0,
-        net: 0,
-        total: 0,
-      });
+      // zero stats on failure
     }
+
+    try {
+      const commitsCmd = `gh api repos/${org}/${repo}/pulls/${pr.number}/commits --jq '[.[] | {sha: .sha, author: (.author.login // .commit.author.name // "unknown"), message: .commit.message}]'`;
+      const commitsOutput = execSync(commitsCmd, { encoding: "utf-8" });
+      commits = JSON.parse(commitsOutput);
+    } catch {
+      // empty commits on failure
+    }
+
+    results.push({
+      number: pr.number,
+      title: pr.title,
+      author: pr.author,
+      mergedAt: pr.mergedAt,
+      additions,
+      deletions,
+      net: additions - deletions,
+      total: additions + deletions,
+      commits,
+    });
 
     // Progress indicator
     if (results.length % 10 === 0) {

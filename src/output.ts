@@ -47,27 +47,34 @@ export function printPRTable(prs: PRStats[]): void {
     const del = colorPad(`-${fmt(pr.deletions)}`, 10, RED);
     const net = colorNet(pr.net, 10);
     const total = rpad(fmt(pr.total), 8);
+    const commitCount = rpad(`${pr.commits.length}c`, 4);
 
-    console.log(`  ${DIM}${num}${RESET} ${title} ${author} ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}`);
+    // Co-authors: commit authors who aren't the PR author
+    const coAuthors = [...new Set(pr.commits.map((c) => c.author).filter((a) => a !== pr.author))];
+    const coAuthorStr = coAuthors.length > 0 ? `  ${DIM}+ ${coAuthors.map((a) => `@${a}`).join(", ")}${RESET}` : "";
+
+    console.log(`  ${DIM}${num}${RESET} ${title} ${author} ${commitCount} ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}${coAuthorStr}`);
   }
 }
 
 export function printUserSummary(users: UserStats[]): void {
   console.log(`\n${BOLD}User Summary${RESET}\n`);
 
-  const totals = { prs: 0, add: 0, del: 0, net: 0, total: 0 };
+  const totals = { prs: 0, commits: 0, add: 0, del: 0, net: 0, total: 0 };
 
   for (const u of users) {
     const author = pad(`@${u.author}`, 20);
     const prs = rpad(`${u.prCount} PRs`, 8);
+    const commits = rpad(`${u.commitCount}c`, 5);
     const add = colorPad(`+${fmt(u.additions)}`, 10, GREEN);
     const del = colorPad(`-${fmt(u.deletions)}`, 10, RED);
     const net = colorNet(u.net, 10);
     const total = rpad(fmt(u.total), 8);
 
-    console.log(`  ${author} ${prs}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}`);
+    console.log(`  ${author} ${prs} ${commits}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}`);
 
     totals.prs += u.prCount;
+    totals.commits += u.commitCount;
     totals.add += u.additions;
     totals.del += u.deletions;
     totals.net += u.net;
@@ -78,9 +85,10 @@ export function printUserSummary(users: UserStats[]): void {
   console.log(`  ${DIM}${line}${RESET}`);
   const label = pad("Total", 20);
   const prs = rpad(`${totals.prs} PRs`, 8);
+  const commits = rpad(`${totals.commits}c`, 5);
   const add = colorPad(`+${fmt(totals.add)}`, 10, GREEN);
   const del = colorPad(`-${fmt(totals.del)}`, 10, RED);
   const net = colorNet(totals.net, 10);
   const total = rpad(fmt(totals.total), 8);
-  console.log(`  ${BOLD}${label}${RESET} ${prs}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}\n`);
+  console.log(`  ${BOLD}${label}${RESET} ${prs} ${commits}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}\n`);
 }
