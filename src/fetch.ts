@@ -2,11 +2,95 @@ import { execSync } from "child_process";
 import { parseDuration } from "./args.js";
 import type { CommitInfo, PRListItem, PRStats } from "./types.js";
 
+const PR_LIMIT = 1000;
+
 interface GHPullRequest {
   number: number;
   title: string;
   author: { login: string };
   mergedAt: string;
+}
+
+function toDateStr(d: Date): string {
+  return d.toISOString().split("T")[0];
+}
+
+function checkGh(): void {
+  try {
+    execSync("gh --version", { stdio: "ignore" });
+  } catch {
+    throw new Error(
+      "gh CLI is not installed or not in PATH. Install it from https://cli.github.com/"
+    );
+  }
+}
+
+function fetchWindow(
+  org: string,
+  repo: string,
+  from: string,
+  to: string
+): GHPullRequest[] {
+  const search = `merged:${from}..${to}`;
+  const listCmd = `gh pr list --repo ${org}/${repo} --state merged --search "${search}" --limit ${PR_LIMIT} --json number,title,author,mergedAt`;
+
+  const output = execSync(listCmd, {
+    encoding: "utf-8",
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  return JSON.parse(output);
+}
+
+function midpoint(from: Date, to: Date): Date {
+  return new Date(from.getTime() + (to.getTime() - from.getTime()) / 2);
+}
+
+/**
+ * Recursively fetch PR list for a date range, subdividing when results hit the cap.
+ */
+function fetchRange(
+  org: string,
+  repo: string,
+  from: Date,
+  to: Date,
+  seen: Set<number>,
+  depth: number = 0
+): GHPullRequest[] {
+  const fromStr = toDateStr(from);
+  const toStr = toDateStr(to);
+
+  // Stop subdividing if the window is a single day
+  if (fromStr === toStr) {
+    const prs = fetchWindow(org, repo, fromStr, toStr);
+    if (prs.length >= PR_LIMIT) {
+      console.warn(`  ⚠ ${fromStr}: ${prs.length} PRs in a single day — some may be missing`);
+    }
+    return prs.filter((pr) => {
+      if (seen.has(pr.number)) return false;
+      seen.add(pr.number);
+      return true;
+    });
+  }
+
+  const prs = fetchWindow(org, repo, fromStr, toStr);
+
+  if (prs.length < PR_LIMIT) {
+    // Under the cap — all results are here
+    return prs.filter((pr) => {
+      if (seen.has(pr.number)) return false;
+      seen.add(pr.number);
+      return true;
+    });
+  }
+
+  // Hit the cap — split the range in half and recurse
+  const mid = midpoint(from, to);
+  console.log(`  Subdividing ${fromStr}..${toStr} (hit ${PR_LIMIT} cap)...`);
+
+  const left = fetchRange(org, repo, from, mid, seen, depth + 1);
+  const right = fetchRange(org, repo, new Date(mid.getTime() + 86400000), to, seen, depth + 1);
+
+  return [...left, ...right];
 }
 
 export async function listMergedPRs(
@@ -15,29 +99,16 @@ export async function listMergedPRs(
   last: string
 ): Promise<PRListItem[]> {
   const since = parseDuration(last);
-  const sinceStr = since.toISOString().split("T")[0];
+  const now = new Date();
 
-  // Check gh is available
-  try {
-    execSync("gh --version", { stdio: "ignore" });
-  } catch {
-    throw new Error(
-      "gh CLI is not installed or not in PATH. Install it from https://cli.github.com/"
-    );
-  }
+  checkGh();
 
-  console.log(`\n  Fetching merged PRs since ${sinceStr}...`);
-
-  const PR_LIMIT = 1000;
-  const listCmd = `gh pr list --repo ${org}/${repo} --state merged --search "merged:>=${sinceStr}" --limit ${PR_LIMIT} --json number,title,author,mergedAt`;
+  console.log(`\n  Fetching merged PRs since ${toDateStr(since)}...`);
 
   let prs: GHPullRequest[];
   try {
-    const output = execSync(listCmd, {
-      encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    prs = JSON.parse(output);
+    const seen = new Set<number>();
+    prs = fetchRange(org, repo, since, now, seen);
   } catch (err: any) {
     throw new Error(
       `Failed to fetch PRs: ${err.message}\nMake sure you're authenticated with gh (run: gh auth login)`
@@ -45,10 +116,6 @@ export async function listMergedPRs(
   }
 
   console.log(`  Found ${prs.length} merged PRs.`);
-
-  if (prs.length >= PR_LIMIT) {
-    console.warn(`\n  ⚠ Results capped at ${PR_LIMIT} — some PRs may be missing. Try a shorter time range.`);
-  }
 
   return prs.map((pr) => ({
     number: pr.number,

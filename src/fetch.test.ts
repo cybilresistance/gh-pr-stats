@@ -50,6 +50,43 @@ describe("listMergedPRs", () => {
     ]);
   });
 
+  it("subdivides when results hit the cap", async () => {
+    const mockWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Generate 1000 fake PRs for the first call (triggers subdivision)
+    const fullRange = Array.from({ length: 1000 }, (_, i) => ({
+      number: i + 1,
+      title: `PR ${i + 1}`,
+      author: { login: "alice" },
+      mergedAt: "2026-03-10T12:00:00Z",
+    }));
+
+    // Left half returns 500, right half returns 600
+    const leftHalf = fullRange.slice(0, 500);
+    const rightHalf = fullRange.slice(400, 1000); // overlapping PR numbers 401-500
+
+    let callCount = 0;
+    mockExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("gh --version")) return "" as any;
+      if (cmdStr.includes("gh pr list")) {
+        callCount++;
+        if (callCount === 1) return JSON.stringify(fullRange) as any;
+        if (callCount === 2) return JSON.stringify(leftHalf) as any;
+        if (callCount === 3) return JSON.stringify(rightHalf) as any;
+        return "[]" as any;
+      }
+      return "" as any;
+    });
+
+    const result = await listMergedPRs("myorg", "myrepo", "30d");
+
+    // Should have all 1000 unique PRs (deduped overlap)
+    expect(result).toHaveLength(1000);
+    // Should have made 3 gh pr list calls (full + 2 halves)
+    expect(callCount).toBe(3);
+  });
+
   it("throws when gh CLI is not installed", async () => {
     mockExecSync.mockImplementation((cmd: any) => {
       if (String(cmd).includes("gh --version")) throw new Error("not found");
