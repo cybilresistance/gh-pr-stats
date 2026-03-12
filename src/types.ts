@@ -13,6 +13,7 @@ export interface PRStats {
   additions: number;
   deletions: number;
   net: number;
+  total: number;
 }
 
 export interface UserStats {
@@ -21,4 +22,5 @@ export interface UserStats {
   additions: number;
   deletions: number;
   net: number;
+  total: number;
 }

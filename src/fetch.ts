@@ -77,6 +77,7 @@ export async function fetchPRStats(
         additions: stats.additions,
         deletions: stats.deletions,
         net: stats.additions - stats.deletions,
+        total: stats.additions + stats.deletions,
       });
     } catch {
       // If we can't get stats for a PR, include it with zero stats
@@ -88,6 +89,7 @@ export async function fetchPRStats(
         additions: 0,
         deletions: 0,
         net: 0,
+        total: 0,
       });
     }
 

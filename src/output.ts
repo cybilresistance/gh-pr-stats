@@ -40,15 +40,16 @@ export function printPRTable(prs: PRStats[]): void {
     const add = `${GREEN}+${fmt(pr.additions)}${RESET}`.padStart(20);
     const del = `${RED}-${fmt(pr.deletions)}${RESET}`.padStart(20);
     const net = colorNet(pr.net);
+    const total = rpad(fmt(pr.total), 8);
 
-    console.log(`  ${DIM}${num}${RESET} ${title} ${author} ${add}  ${del}  net ${net}`);
+    console.log(`  ${DIM}${num}${RESET} ${title} ${author} ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}`);
   }
 }
 
 export function printUserSummary(users: UserStats[]): void {
   console.log(`\n${BOLD}User Summary${RESET}\n`);
 
-  const totals = { prs: 0, add: 0, del: 0, net: 0 };
+  const totals = { prs: 0, add: 0, del: 0, net: 0, total: 0 };
 
   for (const u of users) {
     const author = pad(`@${u.author}`, 20);
@@ -56,13 +57,15 @@ export function printUserSummary(users: UserStats[]): void {
     const add = `${GREEN}+${fmt(u.additions)}${RESET}`.padStart(20);
     const del = `${RED}-${fmt(u.deletions)}${RESET}`.padStart(20);
     const net = colorNet(u.net);
+    const total = rpad(fmt(u.total), 8);
 
-    console.log(`  ${author} ${prs}  ${add}  ${del}  net ${net}`);
+    console.log(`  ${author} ${prs}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}`);
 
     totals.prs += u.prCount;
     totals.add += u.additions;
     totals.del += u.deletions;
     totals.net += u.net;
+    totals.total += u.total;
   }
 
   const line = "\u2500".repeat(60);
@@ -72,5 +75,6 @@ export function printUserSummary(users: UserStats[]): void {
   const add = `${GREEN}+${fmt(totals.add)}${RESET}`.padStart(20);
   const del = `${RED}-${fmt(totals.del)}${RESET}`.padStart(20);
   const net = colorNet(totals.net);
-  console.log(`  ${BOLD}${label}${RESET} ${prs}  ${add}  ${del}  net ${net}\n`);
+  const total = rpad(fmt(totals.total), 8);
+  console.log(`  ${BOLD}${label}${RESET} ${prs}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}\n`);
 }

@@ -10,6 +10,7 @@ export function aggregateByUser(prs: PRStats[]): UserStats[] {
       existing.additions += pr.additions;
       existing.deletions += pr.deletions;
       existing.net += pr.net;
+      existing.total += pr.total;
     } else {
       map.set(pr.author, {
         author: pr.author,
@@ -17,9 +18,10 @@ export function aggregateByUser(prs: PRStats[]): UserStats[] {
         additions: pr.additions,
         deletions: pr.deletions,
         net: pr.net,
+        total: pr.total,
       });
     }
   }
 
-  return Array.from(map.values()).sort((a, b) => b.net - a.net);
+  return Array.from(map.values()).sort((a, b) => b.total - a.total);
 }

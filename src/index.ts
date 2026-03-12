@@ -29,8 +29,7 @@ async function main() {
 
   // 5. Merge cached + newly fetched
   const allPRs = [...cachedInRange, ...newlyFetched].sort(
-    (a, b) =>
-      new Date(a.mergedAt).getTime() - new Date(b.mergedAt).getTime()
+    (a, b) => b.total - a.total
   );
 
   // 6. Save only newly fetched PRs to cache
