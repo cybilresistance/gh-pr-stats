@@ -1,21 +1,19 @@
 import { execSync } from "child_process";
 import { parseDuration } from "./args.js";
-import type { PRStats } from "./types.js";
+import type { PRListItem, PRStats } from "./types.js";
 
 interface GHPullRequest {
   number: number;
   title: string;
   author: { login: string };
   mergedAt: string;
-  additions: number;
-  deletions: number;
 }
 
-export async function fetchMergedPRs(
+export async function listMergedPRs(
   org: string,
   repo: string,
   last: string
-): Promise<PRStats[]> {
+): Promise<PRListItem[]> {
   const since = parseDuration(last);
   const sinceStr = since.toISOString().split("T")[0];
 
@@ -30,8 +28,6 @@ export async function fetchMergedPRs(
 
   console.log(`\n  Fetching merged PRs since ${sinceStr}...`);
 
-  // Use gh pr list with JSON output to get merged PRs
-  // Then use gh api to get diff stats for each PR
   const listCmd = `gh pr list --repo ${org}/${repo} --state merged --search "merged:>=${sinceStr}" --limit 300 --json number,title,author,mergedAt`;
 
   let prs: GHPullRequest[];
@@ -47,9 +43,25 @@ export async function fetchMergedPRs(
     );
   }
 
-  console.log(`  Found ${prs.length} merged PRs, fetching diff stats...`);
+  console.log(`  Found ${prs.length} merged PRs.`);
 
-  // Fetch diff stats for each PR via gh api
+  return prs.map((pr) => ({
+    number: pr.number,
+    title: pr.title,
+    author: pr.author.login,
+    mergedAt: pr.mergedAt,
+  }));
+}
+
+export async function fetchPRStats(
+  org: string,
+  repo: string,
+  prs: PRListItem[]
+): Promise<PRStats[]> {
+  if (prs.length === 0) return [];
+
+  console.log(`  Fetching diff stats for ${prs.length} PRs...`);
+
   const results: PRStats[] = [];
   for (const pr of prs) {
     try {
@@ -60,7 +72,7 @@ export async function fetchMergedPRs(
       results.push({
         number: pr.number,
         title: pr.title,
-        author: pr.author.login,
+        author: pr.author,
         mergedAt: pr.mergedAt,
         additions: stats.additions,
         deletions: stats.deletions,
@@ -71,7 +83,7 @@ export async function fetchMergedPRs(
       results.push({
         number: pr.number,
         title: pr.title,
-        author: pr.author.login,
+        author: pr.author,
         mergedAt: pr.mergedAt,
         additions: 0,
         deletions: 0,
