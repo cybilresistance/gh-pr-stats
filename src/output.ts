@@ -1,4 +1,4 @@
-import type { PRStats, UserStats } from "./types.js";
+import type { UserStats } from "./types.js";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -36,42 +36,23 @@ export function printHeader(org: string, repo: string, last: string): void {
   console.log(DIM + line + RESET);
 }
 
-export function printPRTable(prs: PRStats[]): void {
-  console.log(`\n${BOLD}Merged PRs (${prs.length})${RESET}\n`);
-
-  for (const pr of prs) {
-    const num = `#${pr.number}`.padEnd(7);
-    const title = pad(pr.title, 40);
-    const author = pad(`@${pr.author}`, 18);
-    const add = colorPad(`+${fmt(pr.additions)}`, 10, GREEN);
-    const del = colorPad(`-${fmt(pr.deletions)}`, 10, RED);
-    const net = colorNet(pr.net, 10);
-    const total = rpad(fmt(pr.total), 8);
-    const commitCount = rpad(`${pr.commits.length}c`, 4);
-
-    // Co-authors: commit authors who aren't the PR author
-    const coAuthors = [...new Set(pr.commits.map((c) => c.author).filter((a) => a !== pr.author))];
-    const coAuthorStr = coAuthors.length > 0 ? `  ${DIM}+ ${coAuthors.map((a) => `@${a}`).join(", ")}${RESET}` : "";
-
-    console.log(`  ${DIM}${num}${RESET} ${title} ${author} ${commitCount} ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}${coAuthorStr}`);
-  }
-}
-
-export function printUserSummary(users: UserStats[]): void {
-  console.log(`\n${BOLD}User Summary${RESET}\n`);
+function printUserTable(title: string, users: UserStats[], showCommits: boolean): void {
+  console.log(`\n${BOLD}${title}${RESET}\n`);
 
   const totals = { prs: 0, commits: 0, add: 0, del: 0, net: 0, total: 0 };
 
-  for (const u of users) {
+  for (let i = 0; i < users.length; i++) {
+    const u = users[i];
+    const rank = `${DIM}${String(i + 1).padStart(3)}.${RESET}`;
     const author = pad(`@${u.author}`, 20);
     const prs = rpad(`${u.prCount} PRs`, 8);
-    const commits = rpad(`${u.commitCount}c`, 5);
+    const commits = showCommits ? ` ${rpad(`${u.commitCount}c`, 5)}` : "";
     const add = colorPad(`+${fmt(u.additions)}`, 10, GREEN);
     const del = colorPad(`-${fmt(u.deletions)}`, 10, RED);
     const net = colorNet(u.net, 10);
     const total = rpad(fmt(u.total), 8);
 
-    console.log(`  ${author} ${prs} ${commits}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}`);
+    console.log(`  ${rank} ${author} ${prs}${commits}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}`);
 
     totals.prs += u.prCount;
     totals.commits += u.commitCount;
@@ -81,14 +62,24 @@ export function printUserSummary(users: UserStats[]): void {
     totals.total += u.total;
   }
 
-  const line = "\u2500".repeat(60);
+  const line = "\u2500".repeat(65);
   console.log(`  ${DIM}${line}${RESET}`);
+  const rankSpacer = "     ";
   const label = pad("Total", 20);
   const prs = rpad(`${totals.prs} PRs`, 8);
-  const commits = rpad(`${totals.commits}c`, 5);
+  const commits = showCommits ? ` ${rpad(`${totals.commits}c`, 5)}` : "";
   const add = colorPad(`+${fmt(totals.add)}`, 10, GREEN);
   const del = colorPad(`-${fmt(totals.del)}`, 10, RED);
   const net = colorNet(totals.net, 10);
   const total = rpad(fmt(totals.total), 8);
-  console.log(`  ${BOLD}${label}${RESET} ${prs} ${commits}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}\n`);
+  console.log(`  ${rankSpacer} ${BOLD}${label}${RESET} ${prs}${commits}  ${add}  ${del}  net ${net}  tot ${BOLD}${total}${RESET}\n`);
+}
+
+export function printUserSummary(users: UserStats[], showCommits: boolean = false): void {
+  // First table: current order (by total lines changed)
+  printUserTable("User Summary (by total lines changed)", users, showCommits);
+
+  // Second table: sorted by number of PRs descending
+  const byPRCount = [...users].sort((a, b) => b.prCount - a.prCount || b.total - a.total);
+  printUserTable("User Summary (by PR count)", byPRCount, showCommits);
 }

@@ -9,6 +9,8 @@ interface GHPullRequest {
   title: string;
   author: { login: string };
   mergedAt: string;
+  additions: number;
+  deletions: number;
 }
 
 function toDateStr(d: Date): string {
@@ -25,20 +27,62 @@ function checkGh(): void {
   }
 }
 
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** GitHub's GraphQL endpoint intermittently 502s on large paginated queries. */
+function isTransient(message: string): boolean {
+  return /HTTP (50[0234]|429)|Bad Gateway|Service Unavailable|Gateway Time-?out|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up/i.test(
+    message
+  );
+}
+
+function ghExec(cmd: string, attempts: number = 4): string {
+  let lastErr: any;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return execSync(cmd, {
+        encoding: "utf-8",
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err: any) {
+      lastErr = err;
+      const message = `${err.message ?? ""}\n${err.stderr ?? ""}`;
+      if (i === attempts - 1 || !isTransient(message)) throw err;
+      const backoff = 1000 * 2 ** i;
+      console.warn(`  ⚠ transient GitHub error, retrying in ${backoff / 1000}s...`);
+      sleepSync(backoff);
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Cheap count of merged PRs in a window — one search API call, no diff stats.
+ * Used to decide whether a window needs subdividing, so we never pay for a
+ * 1000-record diff-stat fetch just to discover it was capped.
+ */
+function countWindow(org: string, repo: string, from: string, to: string): number {
+  const q = `repo:${org}/${repo} is:pr is:merged merged:${from}..${to}`;
+  const cmd = `gh api -X GET search/issues -f q=${JSON.stringify(q)} -F per_page=1 --jq '.total_count'`;
+  return parseInt(ghExec(cmd).trim(), 10);
+}
+
 function fetchWindow(
   org: string,
   repo: string,
   from: string,
-  to: string
+  to: string,
+  limit: number = PR_LIMIT
 ): GHPullRequest[] {
   const search = `merged:${from}..${to}`;
-  const listCmd = `gh pr list --repo ${org}/${repo} --state merged --search "${search}" --limit ${PR_LIMIT} --json number,title,author,mergedAt`;
+  // additions/deletions come back in this same paginated query, so no per-PR
+  // API call is needed for line counts.
+  const listCmd = `gh pr list --repo ${org}/${repo} --state merged --search "${search}" --limit ${limit} --json number,title,author,mergedAt,additions,deletions`;
 
-  const output = execSync(listCmd, {
-    encoding: "utf-8",
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  return JSON.parse(output);
+  return JSON.parse(ghExec(listCmd));
 }
 
 function midpoint(from: Date, to: Date): Date {
@@ -46,7 +90,12 @@ function midpoint(from: Date, to: Date): Date {
 }
 
 /**
- * Recursively fetch PR list for a date range, subdividing when results hit the cap.
+ * Recursively fetch PR list for a date range, subdividing when a window holds
+ * more PRs than a single search query can return.
+ *
+ * The window size is decided by a cheap count call, NOT by fetching records and
+ * checking whether they hit the cap — on a busy repo that wasted a full
+ * 1000-record diff-stat fetch (~10 API pages) at every level of the recursion.
  */
 function fetchRange(
   org: string,
@@ -54,121 +103,134 @@ function fetchRange(
   from: Date,
   to: Date,
   seen: Set<number>,
-  depth: number = 0
+  progress: { done: number; total: number }
 ): GHPullRequest[] {
   const fromStr = toDateStr(from);
   const toStr = toDateStr(to);
 
-  // Stop subdividing if the window is a single day
-  if (fromStr === toStr) {
-    const prs = fetchWindow(org, repo, fromStr, toStr);
-    if (prs.length >= PR_LIMIT) {
-      console.warn(`  ⚠ ${fromStr}: ${prs.length} PRs in a single day — some may be missing`);
+  const count = countWindow(org, repo, fromStr, toStr);
+
+  // Nothing merged in this window — skip the fetch entirely
+  if (count === 0) return [];
+
+  const dedupe = (prs: GHPullRequest[]) =>
+    prs.filter((pr) => {
+      if (seen.has(pr.number)) return false;
+      seen.add(pr.number);
+      return true;
+    });
+
+  if (count <= PR_LIMIT || fromStr === toStr) {
+    if (count > PR_LIMIT) {
+      console.warn(
+        `  ⚠ ${fromStr}: ${count} PRs merged in a single day — only ${PR_LIMIT} retrievable, ${count - PR_LIMIT} will be missing`
+      );
     }
-    return prs.filter((pr) => {
-      if (seen.has(pr.number)) return false;
-      seen.add(pr.number);
-      return true;
-    });
+    // Ask for only as many as exist, so we don't page past the end
+    const prs = dedupe(fetchWindow(org, repo, fromStr, toStr, Math.min(count, PR_LIMIT)));
+    progress.done += prs.length;
+    process.stdout.write(`  ${progress.done}/${progress.total} PRs\r`);
+    return prs;
   }
 
-  const prs = fetchWindow(org, repo, fromStr, toStr);
-
-  if (prs.length < PR_LIMIT) {
-    // Under the cap — all results are here
-    return prs.filter((pr) => {
-      if (seen.has(pr.number)) return false;
-      seen.add(pr.number);
-      return true;
-    });
-  }
-
-  // Hit the cap — split the range in half and recurse
+  // Too many for one query — split the range in half and recurse
   const mid = midpoint(from, to);
-  console.log(`  Subdividing ${fromStr}..${toStr} (hit ${PR_LIMIT} cap)...`);
-
-  const left = fetchRange(org, repo, from, mid, seen, depth + 1);
-  const right = fetchRange(org, repo, new Date(mid.getTime() + 86400000), to, seen, depth + 1);
+  const left = fetchRange(org, repo, from, mid, seen, progress);
+  const right = fetchRange(org, repo, new Date(mid.getTime() + 86400000), to, seen, progress);
 
   return [...left, ...right];
 }
 
+export function rangeStart(last: string): Date {
+  return parseDuration(last);
+}
+
+export { checkGh, countWindow };
+
+/**
+ * Fetch every merged PR in the given inclusive date range (UTC, YYYY-MM-DD).
+ */
 export async function listMergedPRs(
   org: string,
   repo: string,
-  last: string
+  fromStr: string,
+  toStr: string,
+  progress: { done: number; total: number }
 ): Promise<PRListItem[]> {
-  const since = parseDuration(last);
-  const now = new Date();
-
-  checkGh();
-
-  console.log(`\n  Fetching merged PRs since ${toDateStr(since)}...`);
-
   let prs: GHPullRequest[];
   try {
     const seen = new Set<number>();
-    prs = fetchRange(org, repo, since, now, seen);
+    prs = fetchRange(
+      org,
+      repo,
+      new Date(`${fromStr}T00:00:00Z`),
+      new Date(`${toStr}T00:00:00Z`),
+      seen,
+      progress
+    );
   } catch (err: any) {
     throw new Error(
       `Failed to fetch PRs: ${err.message}\nMake sure you're authenticated with gh (run: gh auth login)`
     );
   }
 
-  console.log(`  Found ${prs.length} merged PRs.`);
-
   return prs.map((pr) => ({
     number: pr.number,
     title: pr.title,
     author: pr.author.login,
     mergedAt: pr.mergedAt,
+    additions: pr.additions ?? 0,
+    deletions: pr.deletions ?? 0,
   }));
+}
+
+function toPRStats(pr: PRListItem, commits: CommitInfo[], commitsFetched: boolean): PRStats {
+  return {
+    number: pr.number,
+    title: pr.title,
+    author: pr.author,
+    mergedAt: pr.mergedAt,
+    additions: pr.additions,
+    deletions: pr.deletions,
+    net: pr.additions - pr.deletions,
+    total: pr.additions + pr.deletions,
+    commits,
+    commitsFetched,
+  };
+}
+
+/**
+ * Fetch the per-PR commit list. This is one API call per PR — expensive on busy
+ * repos — so it is opt-in via --commits and off by default. Line counts do NOT
+ * depend on it; they come from the PR list query.
+ */
+function fetchCommits(org: string, repo: string, prNumber: number): CommitInfo[] {
+  try {
+    const commitsCmd = `gh api repos/${org}/${repo}/pulls/${prNumber}/commits --jq '[.[] | {sha: .sha, author: (.author.login // .commit.author.name // "unknown"), message: .commit.message}]'`;
+    return JSON.parse(execSync(commitsCmd, { encoding: "utf-8" }));
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchPRStats(
   org: string,
   repo: string,
-  prs: PRListItem[]
+  prs: PRListItem[],
+  withCommits: boolean = false
 ): Promise<PRStats[]> {
   if (prs.length === 0) return [];
 
-  console.log(`  Fetching stats & commits for ${prs.length} PRs...`);
+  if (!withCommits) {
+    // No extra API calls: additions/deletions already came from the list query.
+    return prs.map((pr) => toPRStats(pr, [], false));
+  }
+
+  console.log(`  Fetching commits for ${prs.length} PRs (1 API call each)...`);
 
   const results: PRStats[] = [];
   for (const pr of prs) {
-    let additions = 0;
-    let deletions = 0;
-    let commits: CommitInfo[] = [];
-
-    try {
-      const statsCmd = `gh api repos/${org}/${repo}/pulls/${pr.number} --jq '{additions, deletions}'`;
-      const statsOutput = execSync(statsCmd, { encoding: "utf-8" });
-      const stats = JSON.parse(statsOutput);
-      additions = stats.additions;
-      deletions = stats.deletions;
-    } catch {
-      // zero stats on failure
-    }
-
-    try {
-      const commitsCmd = `gh api repos/${org}/${repo}/pulls/${pr.number}/commits --jq '[.[] | {sha: .sha, author: (.author.login // .commit.author.name // "unknown"), message: .commit.message}]'`;
-      const commitsOutput = execSync(commitsCmd, { encoding: "utf-8" });
-      commits = JSON.parse(commitsOutput);
-    } catch {
-      // empty commits on failure
-    }
-
-    results.push({
-      number: pr.number,
-      title: pr.title,
-      author: pr.author,
-      mergedAt: pr.mergedAt,
-      additions,
-      deletions,
-      net: additions - deletions,
-      total: additions + deletions,
-      commits,
-    });
+    results.push(toPRStats(pr, fetchCommits(org, repo, pr.number), true));
 
     // Progress indicator
     if (results.length % 10 === 0) {
@@ -176,6 +238,6 @@ export async function fetchPRStats(
     }
   }
 
-  console.log(`  Fetched stats for ${results.length} PRs.`);
+  console.log(`  Fetched commits for ${results.length} PRs.`);
   return results;
 }

@@ -3,6 +3,7 @@ export interface Args {
   repo: string;
   last: string;
   noCache: boolean;
+  withCommits: boolean;
 }
 
 function printUsage(): never {
@@ -13,6 +14,8 @@ Options:
   --repo      Repository name (required)
   --last      Time period, e.g. 30d, 4w, 3m (required)
   --no-cache  Skip cache and fetch fresh data
+  --commits   Also fetch per-PR commits (1 extra API call per PR — slow on
+              busy repos). Off by default; line counts don't need it.
   --help      Show this help message
 
 Examples:
@@ -30,6 +33,7 @@ export function parseArgs(argv: string[]): Args {
   let repo = "";
   let last = "";
   let noCache = false;
+  let withCommits = false;
 
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -44,6 +48,9 @@ export function parseArgs(argv: string[]): Args {
         break;
       case "--no-cache":
         noCache = true;
+        break;
+      case "--commits":
+        withCommits = true;
         break;
     }
   }
@@ -60,7 +67,7 @@ export function parseArgs(argv: string[]): Args {
     process.exit(1);
   }
 
-  return { org, repo, last, noCache };
+  return { org, repo, last, noCache, withCommits };
 }
 
 export function parseDuration(last: string): Date {

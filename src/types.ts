@@ -3,6 +3,8 @@ export interface PRListItem {
   title: string;
   author: string;
   mergedAt: string;
+  additions: number;
+  deletions: number;
 }
 
 export interface CommitInfo {
@@ -21,6 +23,8 @@ export interface PRStats {
   net: number;
   total: number;
   commits: CommitInfo[];
+  /** True when per-PR commits were actually fetched (see --commits). */
+  commitsFetched: boolean;
 }
 
 export interface UserStats {
